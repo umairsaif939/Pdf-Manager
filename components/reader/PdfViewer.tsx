@@ -2,13 +2,27 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { Loader2, AlertCircle } from "lucide-react";
-import { loadPdf, renderPdfPage, generateThumbnailUrl } from "@/lib/pdf/pdfService";
+import {
+  loadPdf,
+  renderPdfPage,
+  renderPdfTextLayer,
+  generateThumbnailUrl,
+} from "@/lib/pdf/pdfService";
 import { DbDocument } from "@/lib/storage/db";
+import { AnnotationOverlay } from "./AnnotationOverlay";
+import { AnnotationItem, ToolType, ShapeType } from "@/lib/annotations/types";
 
 interface PdfViewerProps {
   doc: DbDocument;
   currentPage: number;
   zoomLevel: number; // e.g. 100 for 100%
+  activeTool: ToolType;
+  selectedShape: ShapeType;
+  selectedColor: string;
+  strokeWidth: number;
+  showAnnotations: boolean;
+  annotations: AnnotationItem[];
+  onAnnotationsChange: (newAnns: AnnotationItem[]) => void;
   onPageChange?: (newPage: number) => void;
   onTotalPagesLoaded?: (total: number) => void;
   onThumbnailsReady?: (thumbnails: { page: number; url: string }[]) => void;
@@ -18,11 +32,20 @@ export function PdfViewer({
   doc,
   currentPage,
   zoomLevel,
+  activeTool,
+  selectedShape,
+  selectedColor,
+  strokeWidth,
+  showAnnotations,
+  annotations,
+  onAnnotationsChange,
   onPageChange,
   onTotalPagesLoaded,
   onThumbnailsReady,
 }: PdfViewerProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const textLayerRef = useRef<HTMLDivElement>(null);
 
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -86,7 +109,7 @@ export function PdfViewer({
     }
   };
 
-  // 2. Render Page to Canvas
+  // 2. Render Page Canvas & PDF Text Layer
   useEffect(() => {
     let isCancelled = false;
 
@@ -103,6 +126,11 @@ export function PdfViewer({
 
         if (!isCancelled) {
           setPageSize({ width: rendered.width, height: rendered.height });
+
+          // Render selectable TextLayer
+          if (textLayerRef.current) {
+            await renderPdfTextLayer(page, textLayerRef.current, scale);
+          }
         }
       } catch (err: any) {
         if (!isCancelled) {
@@ -155,19 +183,47 @@ export function PdfViewer({
     );
   }
 
+  const allowTextSelection = activeTool === "select" || activeTool === "highlighter";
+
   return (
     <div className="relative flex flex-col items-center justify-center min-h-full py-6">
       {/* Canvas Wrapper with paper shadow */}
       <div
-        className="relative bg-white shadow-soft rounded-xs border border-line/60 transition-shadow duration-200"
+        ref={containerRef}
+        className="relative bg-white shadow-soft rounded-xs border border-line/60 transition-shadow duration-200 select-text"
         style={{
           width: pageSize ? `${pageSize.width}px` : "auto",
           height: pageSize ? `${pageSize.height}px` : "auto",
         }}
       >
+        {/* 1. Underlying PDF.js Canvas */}
         <canvas ref={canvasRef} className="block rounded-xs" />
 
-        {/* Small subtle page indicator at bottom */}
+        {/* 2. Selectable PDF Text Layer */}
+        <div
+          ref={textLayerRef}
+          className={`textLayer ${allowTextSelection ? "pointer-events-auto" : "pointer-events-none"}`}
+        />
+
+        {/* 3. Annotation Overlay (SVG drawings, highlights, shapes, text boxes) */}
+        {pageSize && (
+          <AnnotationOverlay
+            pageWidth={pageSize.width}
+            pageHeight={pageSize.height}
+            documentId={doc.id}
+            pageIndex={currentPage}
+            activeTool={activeTool}
+            selectedShape={selectedShape}
+            selectedColor={selectedColor}
+            strokeWidth={strokeWidth}
+            showAnnotations={showAnnotations}
+            annotations={annotations}
+            onAnnotationsChange={onAnnotationsChange}
+            containerRef={containerRef}
+          />
+        )}
+
+        {/* Subtle page indicator at bottom */}
         <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[11px] font-sans text-muted">
           Page {currentPage} of {doc.pageCount}
         </div>

@@ -71,6 +71,29 @@ export async function renderPdfPage(
   };
 }
 
+export async function renderPdfTextLayer(
+  page: any,
+  container: HTMLElement,
+  scale: number = 1.0
+): Promise<void> {
+  const viewport = page.getViewport({ scale });
+  container.innerHTML = "";
+  container.style.width = `${Math.floor(viewport.width)}px`;
+  container.style.height = `${Math.floor(viewport.height)}px`;
+
+  const pdfjs = await getPdfjs();
+  const textContent = await page.getTextContent();
+
+  if (pdfjs.TextLayer) {
+    const textLayer = new pdfjs.TextLayer({
+      textContentSource: textContent,
+      container,
+      viewport,
+    });
+    await textLayer.render();
+  }
+}
+
 export async function generateThumbnailUrl(
   pdfDoc: any,
   pageNumber: number = 1,

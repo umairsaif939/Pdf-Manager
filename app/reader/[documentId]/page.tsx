@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, use } from "react";
+import React, { useState, useEffect, use, useCallback } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -10,10 +10,14 @@ import {
   ZoomOut,
   Bookmark,
   Download,
+  MousePointer,
   PenTool,
   Highlighter,
   Eraser,
   Square,
+  Circle,
+  Minus,
+  MoveRight,
   Type,
   StickyNote,
   Undo2,
@@ -27,19 +31,18 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Loader2,
+  ChevronDown,
 } from "lucide-react";
 import { getDocumentById, updateDocument } from "@/lib/storage/documentService";
 import { DbDocument } from "@/lib/storage/db";
 import { PdfViewer } from "@/components/reader/PdfViewer";
-
-type ActiveTool =
-  | "select"
-  | "pen"
-  | "highlighter"
-  | "eraser"
-  | "shape"
-  | "text"
-  | "note";
+import {
+  getAnnotationsForPage,
+  getAllAnnotationsForDocument,
+  savePageAnnotations,
+} from "@/lib/annotations/annotationService";
+import { AnnotationItem, ToolType, ShapeType } from "@/lib/annotations/types";
+import { exportAnnotatedPdf } from "@/lib/pdf/exportPdf";
 
 export default function ReaderPage({
   params,
@@ -55,14 +58,30 @@ export default function ReaderPage({
 
   const [currentPage, setCurrentPage] = useState(1);
   const [zoomLevel, setZoomLevel] = useState(100);
-  const [activeTool, setActiveTool] = useState<ActiveTool>("pen");
+
+  // Active Tool & Settings
+  const [activeTool, setActiveTool] = useState<ToolType>("pen");
+  const [selectedShape, setSelectedShape] = useState<ShapeType>("rectangle");
+  const [showShapeMenu, setShowShapeMenu] = useState(false);
+  const [selectedColor, setSelectedColor] = useState("#E76F35");
+  const [strokeWidth, setStrokeWidth] = useState(3);
   const [showAnnotations, setShowAnnotations] = useState(true);
+
+  // Layout Panels
   const [showThumbnails, setShowThumbnails] = useState(true);
   const [showInspector, setShowInspector] = useState(false);
-  const [selectedColor, setSelectedColor] = useState("#E76F35");
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving">("saved");
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [thumbnails, setThumbnails] = useState<{ page: number; url: string }[]>([]);
+
+  // Annotations & Undo/Redo Stacks
+  const [annotations, setAnnotations] = useState<AnnotationItem[]>([]);
+  const [undoStack, setUndoStack] = useState<AnnotationItem[][]>([]);
+  const [redoStack, setRedoStack] = useState<AnnotationItem[][]>([]);
+
+  // Export State
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
 
   // 1. Fetch Document from IndexedDB
   useEffect(() => {
@@ -76,7 +95,6 @@ export default function ReaderPage({
           setCurrentPage(storedDoc.lastReadPage || 1);
           setZoomLevel(storedDoc.lastZoom || 100);
 
-          // Update last opened timestamp
           await updateDocument(documentId, { lastOpenedAt: Date.now() });
         } else {
           setNotFound(true);
@@ -92,7 +110,106 @@ export default function ReaderPage({
     loadDoc();
   }, [documentId]);
 
-  // Update last-read page in IndexedDB when user flips pages
+  // 2. Fetch Annotations for current page
+  useEffect(() => {
+    async function loadPageAnns() {
+      if (!doc) return;
+      try {
+        const pageAnns = await getAnnotationsForPage(doc.id, currentPage);
+        setAnnotations(pageAnns);
+        setUndoStack([]);
+        setRedoStack([]);
+      } catch (e) {
+        console.error("Failed to load annotations:", e);
+      }
+    }
+
+    loadPageAnns();
+  }, [doc, currentPage]);
+
+  // 3. Handle Annotation Changes with History & Persistence
+  const handleAnnotationsChange = useCallback(
+    async (newAnns: AnnotationItem[], pushHistory = true) => {
+      if (!doc) return;
+
+      if (pushHistory) {
+        setUndoStack((prev) => [...prev, annotations]);
+        setRedoStack([]);
+      }
+
+      setAnnotations(newAnns);
+      setSaveStatus("saving");
+
+      try {
+        await savePageAnnotations(doc.id, currentPage, newAnns);
+        setSaveStatus("saved");
+      } catch (err) {
+        console.error("Autosave annotations failed:", err);
+        setSaveStatus("saved");
+      }
+    },
+    [doc, currentPage, annotations]
+  );
+
+  // Undo Handler
+  const handleUndo = useCallback(() => {
+    if (undoStack.length === 0 || !doc) return;
+    const previous = undoStack[undoStack.length - 1];
+    setUndoStack((prev) => prev.slice(0, prev.length - 1));
+    setRedoStack((prev) => [...prev, annotations]);
+
+    handleAnnotationsChange(previous, false);
+  }, [undoStack, annotations, doc, handleAnnotationsChange]);
+
+  // Redo Handler
+  const handleRedo = useCallback(() => {
+    if (redoStack.length === 0 || !doc) return;
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack((prev) => prev.slice(0, prev.length - 1));
+    setUndoStack((prev) => [...prev, annotations]);
+
+    handleAnnotationsChange(next, false);
+  }, [redoStack, annotations, doc, handleAnnotationsChange]);
+
+  // Keyboard Shortcuts (Undo/Redo & Tools)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger shortcuts if user is typing in textarea or input
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleRedo();
+        } else {
+          handleUndo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        handleRedo();
+      } else if (e.key.toLowerCase() === "v") {
+        setActiveTool("select");
+      } else if (e.key.toLowerCase() === "p") {
+        setActiveTool("pen");
+      } else if (e.key.toLowerCase() === "h") {
+        setActiveTool("highlighter");
+      } else if (e.key.toLowerCase() === "e") {
+        setActiveTool("eraser");
+      } else if (e.key.toLowerCase() === "t") {
+        setActiveTool("text");
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleUndo, handleRedo]);
+
+  // Update last-read page in IndexedDB
   const handlePageChange = async (newPage: number) => {
     if (!doc) return;
     const clamped = Math.max(1, Math.min(doc.pageCount, newPage));
@@ -107,13 +224,34 @@ export default function ReaderPage({
     }
   };
 
+  // Export Annotated PDF
+  const handleExportPdf = async () => {
+    if (!doc) return;
+
+    try {
+      setIsExporting(true);
+      setExportMessage("Baking vector annotations into PDF copy...");
+
+      const allAnns = await getAllAnnotationsForDocument(doc.id);
+      await exportAnnotatedPdf(doc.originalBlob, doc.name, allAnns);
+
+      setExportMessage("Annotated PDF exported and downloaded successfully!");
+      setTimeout(() => setExportMessage(null), 4000);
+    } catch (err: any) {
+      console.error("Export failed:", err);
+      setExportMessage(`Export failed: ${err.message || "Unknown error"}`);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const colors = [
     { name: "Terracotta", hex: "#E76F35" },
     { name: "Ink", hex: "#25221F" },
     { name: "Forest", hex: "#24483D" },
     { name: "Blue", hex: "#2563EB" },
-    { name: "Yellow", hex: "#F59E0B" },
-    { name: "Danger", hex: "#B84036" },
+    { name: "Amber", hex: "#F59E0B" },
+    { name: "Ruby", hex: "#B84036" },
   ];
 
   if (loading) {
@@ -139,7 +277,7 @@ export default function ReaderPage({
             Document Not Found
           </h2>
           <p className="font-sans text-xs sm:text-sm text-muted leading-relaxed">
-            The requested PDF does not exist in your local IndexedDB storage. It may have been permanently removed or imported on another browser.
+            The requested PDF does not exist in your local IndexedDB storage.
           </p>
           <div className="pt-2">
             <Link
@@ -253,19 +391,25 @@ export default function ReaderPage({
             <Bookmark className={`w-4 h-4 ${isBookmarked ? "fill-warning" : ""}`} />
           </button>
 
+          {/* Export Annotated PDF Button */}
           <button
-            onClick={() => alert("Annotated PDF export engine activates in Phase 4.")}
-            className="px-3 py-1.5 bg-paper hover:bg-line text-ink rounded-control text-xs font-sans font-medium border border-line flex items-center gap-1.5 transition-colors"
-            title="Export PDF with annotations"
+            onClick={handleExportPdf}
+            disabled={isExporting}
+            className="px-3 py-1.5 bg-paper hover:bg-line text-ink rounded-control text-xs font-sans font-medium border border-line flex items-center gap-1.5 transition-colors disabled:opacity-50"
+            title="Download PDF with your annotations"
           >
-            <Download className="w-3.5 h-3.5 text-terracotta" />
+            {isExporting ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-terracotta" />
+            ) : (
+              <Download className="w-3.5 h-3.5 text-terracotta" />
+            )}
             <span className="hidden sm:inline">Export</span>
           </button>
 
           <button
             onClick={() => setShowInspector(!showInspector)}
             className="p-2 text-muted hover:text-ink rounded-control hover:bg-paper"
-            title="Inspector / Outline"
+            title="Inspector / Info"
           >
             {showInspector ? (
               <PanelRightClose className="w-4 h-4" />
@@ -276,90 +420,176 @@ export default function ReaderPage({
         </div>
       </header>
 
-      {/* 2. Floating Annotation Toolbar */}
-      <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 bg-surface/95 backdrop-blur-md border border-line rounded-card p-1.5 shadow-soft flex items-center gap-1 max-w-[95vw] overflow-x-auto">
+      {/* Export Status Banner */}
+      {exportMessage && (
+        <div className="bg-surface px-4 py-1.5 border-b border-line text-xs font-sans flex items-center justify-between text-ink">
+          <span>{exportMessage}</span>
+          <button
+            onClick={() => setExportMessage(null)}
+            className="text-muted hover:text-ink text-[11px]"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* 2. Floating iPad/iPhone Style Annotation Toolbar */}
+      <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 bg-surface/95 backdrop-blur-md border border-line rounded-card p-1.5 shadow-soft flex items-center gap-1 max-w-[96vw] overflow-x-auto">
+        {/* Select / Hand Tool */}
         <button
-          onClick={() => setActiveTool("pen")}
-          className={`p-2 rounded-control transition-colors ${
-            activeTool === "pen"
-              ? "bg-paper text-terracotta font-bold shadow-xs"
+          onClick={() => setActiveTool("select")}
+          className={`p-2 rounded-control transition-all ${
+            activeTool === "select"
+              ? "bg-paper text-terracotta font-bold shadow-xs scale-105"
               : "text-muted hover:text-ink"
           }`}
-          title="Pen (Freehand drawing)"
+          title="Select / Copy Text (V) - Normal text selection and Ctrl+C"
+        >
+          <MousePointer className="w-4 h-4" />
+        </button>
+
+        {/* Pen Tool */}
+        <button
+          onClick={() => setActiveTool("pen")}
+          className={`p-2 rounded-control transition-all ${
+            activeTool === "pen"
+              ? "bg-paper text-terracotta font-bold shadow-xs scale-105"
+              : "text-muted hover:text-ink"
+          }`}
+          title="Pen (P) - Freehand writing and drawing"
         >
           <PenTool className="w-4 h-4" />
         </button>
 
+        {/* Highlighter Tool */}
         <button
           onClick={() => setActiveTool("highlighter")}
-          className={`p-2 rounded-control transition-colors ${
+          className={`p-2 rounded-control transition-all ${
             activeTool === "highlighter"
-              ? "bg-paper text-terracotta font-bold shadow-xs"
+              ? "bg-paper text-terracotta font-bold shadow-xs scale-105"
               : "text-muted hover:text-ink"
           }`}
-          title="Highlighter (Semi-transparent)"
+          title="Highlighter (H) - Select text to highlight or draw directly"
         >
           <Highlighter className="w-4 h-4" />
         </button>
 
+        {/* Vector Eraser */}
         <button
           onClick={() => setActiveTool("eraser")}
-          className={`p-2 rounded-control transition-colors ${
+          className={`p-2 rounded-control transition-all ${
             activeTool === "eraser"
-              ? "bg-paper text-terracotta font-bold shadow-xs"
+              ? "bg-paper text-terracotta font-bold shadow-xs scale-105"
               : "text-muted hover:text-ink"
           }`}
-          title="Eraser (Deletes annotation objects)"
+          title="Eraser (E) - Click or drag over annotations to delete them"
         >
           <Eraser className="w-4 h-4" />
         </button>
 
-        <button
-          onClick={() => setActiveTool("shape")}
-          className={`p-2 rounded-control transition-colors ${
-            activeTool === "shape"
-              ? "bg-paper text-terracotta font-bold shadow-xs"
-              : "text-muted hover:text-ink"
-          }`}
-          title="Shapes (Rectangle, Ellipse, Line)"
-        >
-          <Square className="w-4 h-4" />
-        </button>
+        {/* Shapes Menu Toggle */}
+        <div className="relative">
+          <button
+            onClick={() => {
+              setActiveTool("shape");
+              setShowShapeMenu(!showShapeMenu);
+            }}
+            className={`p-2 rounded-control flex items-center gap-0.5 transition-all ${
+              activeTool === "shape"
+                ? "bg-paper text-terracotta font-bold shadow-xs scale-105"
+                : "text-muted hover:text-ink"
+            }`}
+            title="Shapes - Rectangle, Circle, Line, Arrow"
+          >
+            {selectedShape === "rectangle" && <Square className="w-4 h-4" />}
+            {selectedShape === "circle" && <Circle className="w-4 h-4" />}
+            {selectedShape === "line" && <Minus className="w-4 h-4" />}
+            {selectedShape === "arrow" && <MoveRight className="w-4 h-4" />}
+            <ChevronDown className="w-2.5 h-2.5 opacity-60" />
+          </button>
 
+          {/* Shape Selection Popover */}
+          {showShapeMenu && (
+            <div className="absolute top-11 left-0 z-40 bg-surface border border-line rounded-control p-1.5 shadow-soft flex items-center gap-1">
+              <button
+                onClick={() => {
+                  setSelectedShape("rectangle");
+                  setActiveTool("shape");
+                  setShowShapeMenu(false);
+                }}
+                className={`p-1.5 rounded-md ${
+                  selectedShape === "rectangle" ? "bg-paper text-terracotta" : "text-muted hover:text-ink"
+                }`}
+                title="Rectangle"
+              >
+                <Square className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => {
+                  setSelectedShape("circle");
+                  setActiveTool("shape");
+                  setShowShapeMenu(false);
+                }}
+                className={`p-1.5 rounded-md ${
+                  selectedShape === "circle" ? "bg-paper text-terracotta" : "text-muted hover:text-ink"
+                }`}
+                title="Circle / Ellipse"
+              >
+                <Circle className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => {
+                  setSelectedShape("line");
+                  setActiveTool("shape");
+                  setShowShapeMenu(false);
+                }}
+                className={`p-1.5 rounded-md ${
+                  selectedShape === "line" ? "bg-paper text-terracotta" : "text-muted hover:text-ink"
+                }`}
+                title="Straight Line"
+              >
+                <Minus className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => {
+                  setSelectedShape("arrow");
+                  setActiveTool("shape");
+                  setShowShapeMenu(false);
+                }}
+                className={`p-1.5 rounded-md ${
+                  selectedShape === "arrow" ? "bg-paper text-terracotta" : "text-muted hover:text-ink"
+                }`}
+                title="Arrow"
+              >
+                <MoveRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Text Tool */}
         <button
           onClick={() => setActiveTool("text")}
-          className={`p-2 rounded-control transition-colors ${
+          className={`p-2 rounded-control transition-all ${
             activeTool === "text"
-              ? "bg-paper text-terracotta font-bold shadow-xs"
+              ? "bg-paper text-terracotta font-bold shadow-xs scale-105"
               : "text-muted hover:text-ink"
           }`}
-          title="Text Overlay"
+          title="Text (T) - Click anywhere on page to place a text box"
         >
           <Type className="w-4 h-4" />
         </button>
 
-        <button
-          onClick={() => setActiveTool("note")}
-          className={`p-2 rounded-control transition-colors ${
-            activeTool === "note"
-              ? "bg-paper text-terracotta font-bold shadow-xs"
-              : "text-muted hover:text-ink"
-          }`}
-          title="Sticky Note Pin"
-        >
-          <StickyNote className="w-4 h-4" />
-        </button>
-
         <div className="w-px h-5 bg-line mx-1" />
 
-        {/* Color Presets */}
+        {/* Color Palette (Click to select) */}
         <div className="flex items-center gap-1.5 px-1">
           {colors.map((c) => (
             <button
               key={c.name}
               onClick={() => setSelectedColor(c.hex)}
               className={`w-5 h-5 rounded-full border-2 transition-transform ${
-                selectedColor === c.hex ? "border-ink scale-110" : "border-transparent"
+                selectedColor === c.hex ? "border-ink scale-125 shadow-xs" : "border-transparent hover:scale-110"
               }`}
               style={{ backgroundColor: c.hex }}
               title={c.name}
@@ -369,16 +599,43 @@ export default function ReaderPage({
 
         <div className="w-px h-5 bg-line mx-1" />
 
+        {/* Stroke Width Selector */}
+        <div className="flex items-center gap-1 px-1">
+          {[
+            { label: "Fine", width: 2 },
+            { label: "Med", width: 4 },
+            { label: "Bold", width: 8 },
+          ].map((w) => (
+            <button
+              key={w.label}
+              onClick={() => setStrokeWidth(w.width)}
+              className={`px-1.5 py-0.5 rounded text-[10px] font-sans transition-colors ${
+                strokeWidth === w.width
+                  ? "bg-paper text-terracotta font-bold shadow-xs"
+                  : "text-muted hover:text-ink"
+              }`}
+              title={`${w.label} stroke width (${w.width}px)`}
+            >
+              {w.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="w-px h-5 bg-line mx-1" />
+
+        {/* Undo / Redo */}
         <button
-          onClick={() => alert("Undo activates in Phase 3 with vector history stack.")}
-          className="p-2 text-muted hover:text-ink rounded-control"
+          onClick={handleUndo}
+          disabled={undoStack.length === 0}
+          className="p-2 text-muted hover:text-ink disabled:opacity-30 rounded-control transition-opacity"
           title="Undo (Ctrl+Z)"
         >
           <Undo2 className="w-4 h-4" />
         </button>
         <button
-          onClick={() => alert("Redo activates in Phase 3 with vector history stack.")}
-          className="p-2 text-muted hover:text-ink rounded-control"
+          onClick={handleRedo}
+          disabled={redoStack.length === 0}
+          className="p-2 text-muted hover:text-ink disabled:opacity-30 rounded-control transition-opacity"
           title="Redo (Ctrl+Y)"
         >
           <Redo2 className="w-4 h-4" />
@@ -386,6 +643,7 @@ export default function ReaderPage({
 
         <div className="w-px h-5 bg-line mx-1" />
 
+        {/* Show / Hide Annotations Toggle */}
         <button
           onClick={() => setShowAnnotations(!showAnnotations)}
           className={`p-2 rounded-control transition-colors ${
@@ -429,7 +687,6 @@ export default function ReaderPage({
                 </div>
               ))
             ) : (
-              // Fast fallback thumbnails while rendering
               Array.from({ length: Math.min(doc.pageCount, 12) }).map((_, idx) => {
                 const pageNum = idx + 1;
                 return (
@@ -455,12 +712,19 @@ export default function ReaderPage({
           </aside>
         )}
 
-        {/* Center PDF.js Canvas Viewport */}
+        {/* Center PDF.js Canvas & Annotation Viewport */}
         <main className="flex-1 overflow-auto bg-paper flex items-center justify-center p-4 sm:p-6 relative">
           <PdfViewer
             doc={doc}
             currentPage={currentPage}
             zoomLevel={zoomLevel}
+            activeTool={activeTool}
+            selectedShape={selectedShape}
+            selectedColor={selectedColor}
+            strokeWidth={strokeWidth}
+            showAnnotations={showAnnotations}
+            annotations={annotations}
+            onAnnotationsChange={handleAnnotationsChange}
             onPageChange={handlePageChange}
             onThumbnailsReady={(thumbs) => setThumbnails(thumbs)}
           />
@@ -481,7 +745,7 @@ export default function ReaderPage({
 
             <div className="space-y-3">
               <span className="text-xs font-sans font-semibold text-muted">
-                Storage & Document Info
+                Document & Storage Info
               </span>
               <div className="p-3 bg-paper rounded-control border border-line text-xs font-sans space-y-1.5">
                 <div>
@@ -493,15 +757,50 @@ export default function ReaderPage({
                   <span className="text-ink">{doc.pageCount}</span>
                 </div>
                 <div>
-                  <span className="text-muted block text-[11px]">Size:</span>
-                  <span className="text-ink">
-                    {(doc.sizeBytes / (1024 * 1024)).toFixed(2)} MB
-                  </span>
-                </div>
-                <div>
                   <span className="text-muted block text-[11px]">Storage Engine:</span>
-                  <span className="text-success font-medium">IndexedDB (Local Device)</span>
+                  <span className="text-success font-medium">IndexedDB (100% Local)</span>
                 </div>
+              </div>
+            </div>
+
+            <div className="space-y-3 pt-2">
+              <span className="text-xs font-sans font-semibold text-muted">
+                Annotations on Page {currentPage} ({annotations.length})
+              </span>
+              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                {annotations.length > 0 ? (
+                  annotations.map((ann) => (
+                    <div
+                      key={ann.id}
+                      className="p-2 bg-paper rounded-control border border-line text-xs font-sans flex items-center justify-between"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full"
+                          style={{ backgroundColor: ann.color }}
+                        />
+                        <span className="capitalize text-ink font-medium">
+                          {ann.tool === "shape" ? ann.shapeType : ann.tool}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() =>
+                          handleAnnotationsChange(
+                            annotations.filter((a) => a.id !== ann.id)
+                          )
+                        }
+                        className="text-muted hover:text-danger p-0.5"
+                        title="Delete annotation"
+                      >
+                        <Eraser className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-muted text-xs italic">
+                    No annotations on this page yet.
+                  </p>
+                )}
               </div>
             </div>
           </aside>
