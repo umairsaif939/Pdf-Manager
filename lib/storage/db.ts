@@ -16,8 +16,6 @@ export interface DbDocument {
   lastViewMode: "single" | "two-page" | "continuous";
   modifiedAt: number;
   deletedAt: number | null;
-  syncedWithSupabase?: boolean;
-  supabaseId?: string | null;
 }
 
 export interface DbFolder {
@@ -28,7 +26,6 @@ export interface DbFolder {
   createdAt: number;
   modifiedAt: number;
   deletedAt: number | null;
-  syncedWithSupabase?: boolean;
 }
 
 export interface DbAnnotation {
@@ -50,7 +47,6 @@ export interface DbAnnotation {
   createdAt: number;
   modifiedAt: number;
   zIndex: number;
-  syncedWithSupabase?: boolean;
 }
 
 export interface DbBookmark {
@@ -110,6 +106,8 @@ export class PdfFluxDatabase extends Dexie {
 
   constructor() {
     super("pdf_flux_db");
+
+    // Version 1 (Initial schema)
     this.version(1).stores({
       documents: "id, folderId, isFavorite, deletedAt, lastOpenedAt, dateAdded",
       folders: "id, parentId, deletedAt",
@@ -119,7 +117,21 @@ export class PdfFluxDatabase extends Dexie {
       flashcards: "id, documentId, folderId, reviewState.nextReview",
       readingSessions: "id, documentId, dateKey",
     });
+
+    // Version 2: Index 'name' on documents so queries like .where('name') work without SchemaError.
+    // Existing stored documents and annotations are preserved completely.
+    this.version(2).stores({
+      documents: "id, name, folderId, isFavorite, deletedAt, lastOpenedAt, dateAdded",
+    });
   }
 }
 
 export const db = new PdfFluxDatabase();
+
+// Ensure the database is safely initialized
+export async function getDb(): Promise<PdfFluxDatabase> {
+  if (!db.isOpen()) {
+    await db.open();
+  }
+  return db;
+}

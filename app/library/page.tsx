@@ -199,7 +199,7 @@ export default function LibraryPage() {
                   hour: "2-digit",
                   minute: "2-digit",
                 }),
-                folder: doc.syncedWithSupabase ? "Cloud Synced" : "Local Storage",
+                folder: "Local Storage",
                 isFavorite: doc.isFavorite,
                 studyMinutes: 0,
               }}

@@ -8,10 +8,8 @@ import {
   ChevronRight,
   ZoomIn,
   ZoomOut,
-  Maximize2,
   Bookmark,
   Download,
-  Search,
   PenTool,
   Highlighter,
   Eraser,
@@ -23,8 +21,6 @@ import {
   Eye,
   EyeOff,
   CheckCircle2,
-  Cloud,
-  CloudUpload,
   AlertCircle,
   PanelLeftClose,
   PanelLeftOpen,
@@ -35,7 +31,6 @@ import {
 import { getDocumentById, updateDocument } from "@/lib/storage/documentService";
 import { DbDocument } from "@/lib/storage/db";
 import { PdfViewer } from "@/components/reader/PdfViewer";
-import { syncDocumentToCloud, getSupabaseAuthStatus } from "@/lib/supabase/syncService";
 
 type ActiveTool =
   | "select"
@@ -69,11 +64,6 @@ export default function ReaderPage({
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [thumbnails, setThumbnails] = useState<{ page: number; url: string }[]>([]);
 
-  // Supabase Sync state
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [supabaseConfigured, setSupabaseConfigured] = useState(false);
-
   // 1. Fetch Document from IndexedDB
   useEffect(() => {
     async function loadDoc() {
@@ -102,15 +92,6 @@ export default function ReaderPage({
     loadDoc();
   }, [documentId]);
 
-  // Check Supabase setup
-  useEffect(() => {
-    async function checkAuth() {
-      const status = await getSupabaseAuthStatus();
-      setSupabaseConfigured(status.isConfigured);
-    }
-    checkAuth();
-  }, []);
-
   // Update last-read page in IndexedDB when user flips pages
   const handlePageChange = async (newPage: number) => {
     if (!doc) return;
@@ -124,21 +105,6 @@ export default function ReaderPage({
     } catch {
       setSaveStatus("saved");
     }
-  };
-
-  const handleCloudSync = async () => {
-    if (!doc) return;
-    setIsSyncing(true);
-    setSyncMessage(null);
-
-    const result = await syncDocumentToCloud(doc);
-    if (result.success) {
-      setSyncMessage("Backed up to Supabase Cloud!");
-      setDoc((prev) => (prev ? { ...prev, syncedWithSupabase: true } : null));
-    } else {
-      setSyncMessage(result.error || "Sync failed");
-    }
-    setIsSyncing(false);
   };
 
   const colors = [
@@ -224,14 +190,6 @@ export default function ReaderPage({
               <span className="flex items-center gap-1 text-success">
                 <CheckCircle2 className="w-3 h-3" /> {saveStatus === "saved" ? "Local Saved" : "Saving..."}
               </span>
-              {doc.syncedWithSupabase && (
-                <>
-                  <span>•</span>
-                  <span className="flex items-center gap-1 text-terracotta">
-                    <Cloud className="w-3 h-3" /> Cloud Synced
-                  </span>
-                </>
-              )}
             </div>
           </div>
         </div>
@@ -283,27 +241,6 @@ export default function ReaderPage({
 
         {/* Right: Actions */}
         <div className="flex items-center gap-1.5">
-          {/* Supabase Backup Button */}
-          <button
-            onClick={handleCloudSync}
-            disabled={isSyncing}
-            className={`p-2 rounded-control border transition-colors hidden sm:flex items-center gap-1 text-xs font-sans ${
-              doc.syncedWithSupabase
-                ? "bg-paper text-success border-line"
-                : "bg-paper text-muted hover:text-ink border-line"
-            }`}
-            title="Backup to Supabase Cloud"
-          >
-            {isSyncing ? (
-              <Loader2 className="w-4 h-4 animate-spin text-terracotta" />
-            ) : (
-              <CloudUpload className="w-4 h-4 text-terracotta" />
-            )}
-            <span className="hidden lg:inline">
-              {doc.syncedWithSupabase ? "Synced" : "Cloud Backup"}
-            </span>
-          </button>
-
           <button
             onClick={() => setIsBookmarked(!isBookmarked)}
             className={`p-2 rounded-control border transition-colors ${
@@ -338,19 +275,6 @@ export default function ReaderPage({
           </button>
         </div>
       </header>
-
-      {/* Sync Status Banner if message exists */}
-      {syncMessage && (
-        <div className="bg-surface px-4 py-1.5 border-b border-line text-xs font-sans flex items-center justify-between text-muted">
-          <span>{syncMessage}</span>
-          <button
-            onClick={() => setSyncMessage(null)}
-            className="text-muted hover:text-ink"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
 
       {/* 2. Floating Annotation Toolbar */}
       <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 bg-surface/95 backdrop-blur-md border border-line rounded-card p-1.5 shadow-soft flex items-center gap-1 max-w-[95vw] overflow-x-auto">
@@ -578,28 +502,6 @@ export default function ReaderPage({
                   <span className="text-muted block text-[11px]">Storage Engine:</span>
                   <span className="text-success font-medium">IndexedDB (Local Device)</span>
                 </div>
-              </div>
-            </div>
-
-            <div className="space-y-3 pt-2">
-              <span className="text-xs font-sans font-semibold text-muted">
-                Cloud Sync (Supabase)
-              </span>
-              <div className="p-3 bg-paper rounded-control border border-line text-xs font-sans space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-muted">Cloud Backup:</span>
-                  <span className={doc.syncedWithSupabase ? "text-success font-semibold" : "text-muted"}>
-                    {doc.syncedWithSupabase ? "Synced" : "Local Only"}
-                  </span>
-                </div>
-                <button
-                  onClick={handleCloudSync}
-                  disabled={isSyncing}
-                  className="w-full py-2 bg-surface hover:bg-line text-ink rounded-control border border-line font-medium text-xs flex items-center justify-center gap-1.5 transition-colors"
-                >
-                  <CloudUpload className="w-3.5 h-3.5 text-terracotta" />
-                  <span>{isSyncing ? "Syncing..." : "Sync with Cloud"}</span>
-                </button>
               </div>
             </div>
           </aside>

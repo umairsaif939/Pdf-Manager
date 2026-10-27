@@ -40,7 +40,10 @@ export default function RootLayout({
       suppressHydrationWarning
       className={`${dmSerif.variable} ${inter.variable} ${caveat.variable}`}
     >
-      <body className="bg-paper text-ink font-sans antialiased min-h-screen">
+      <body
+        suppressHydrationWarning
+        className="bg-paper text-ink font-sans antialiased min-h-screen"
+      >
         <ThemeProvider>
           <AppShell>{children}</AppShell>
         </ThemeProvider>

@@ -13,7 +13,6 @@ import {
   ShieldCheck,
   Eye,
   EyeOff,
-  Cloud,
 } from "lucide-react";
 import { DEMO_DOCUMENTS, DEMO_FOLDERS } from "@/lib/demoData";
 import { DocumentCard } from "@/components/shared/DocumentCard";

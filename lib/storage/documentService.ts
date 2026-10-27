@@ -1,4 +1,4 @@
-import { db, DbDocument, DbFolder } from "./db";
+import { db, getDb, DbDocument } from "./db";
 import { loadPdf } from "../pdf/pdfService";
 
 export interface ImportValidationResult {
@@ -53,6 +53,7 @@ export async function importPdfFiles(
   files: FileList | File[],
   folderId?: string | null
 ): Promise<{ successful: DbDocument[]; errors: { filename: string; reason: string }[] }> {
+  const database = await getDb();
   const successful: DbDocument[] = [];
   const errors: { filename: string; reason: string }[] = [];
 
@@ -78,10 +79,25 @@ export async function importPdfFiles(
 
       // Check if another file with exact name exists and rename gracefully if needed
       let docName = file.name;
-      const existing = await db.documents.where("name").equals(file.name).first();
-      if (existing && !existing.deletedAt) {
-        const base = file.name.replace(/\.pdf$/i, "");
-        docName = `${base} (Copy ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}).pdf`;
+      try {
+        const existing = await database.documents
+          .where("name")
+          .equals(file.name)
+          .filter((d) => !d.deletedAt)
+          .first();
+
+        if (existing) {
+          const base = file.name.replace(/\.pdf$/i, "");
+          const timestamp = new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+          });
+          docName = `${base} (${timestamp}).pdf`;
+        }
+      } catch (checkErr) {
+        // Fallback in case of index delay
+        console.warn("Duplicate check fallback:", checkErr);
       }
 
       const docRecord: DbDocument = {
@@ -100,10 +116,9 @@ export async function importPdfFiles(
         lastViewMode: "continuous",
         modifiedAt: now,
         deletedAt: null,
-        syncedWithSupabase: false,
       };
 
-      await db.documents.add(docRecord);
+      await database.documents.add(docRecord);
       successful.push(docRecord);
     } catch (err: any) {
       console.error("Failed to import PDF:", file.name, err);
@@ -118,43 +133,47 @@ export async function importPdfFiles(
 }
 
 export async function getActiveDocuments(): Promise<DbDocument[]> {
-  const all = await db.documents.toArray();
+  const database = await getDb();
+  const all = await database.documents.toArray();
   return all
     .filter((d) => !d.deletedAt)
     .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt);
 }
 
 export async function getDocumentById(id: string): Promise<DbDocument | undefined> {
-  return db.documents.get(id);
+  const database = await getDb();
+  return database.documents.get(id);
 }
 
 export async function updateDocument(
   id: string,
   changes: Partial<Omit<DbDocument, "id">>
 ): Promise<void> {
-  await db.documents.update(id, {
+  const database = await getDb();
+  await database.documents.update(id, {
     ...changes,
     modifiedAt: Date.now(),
   });
 }
 
 export async function toggleFavorite(id: string): Promise<boolean> {
-  const doc = await db.documents.get(id);
+  const database = await getDb();
+  const doc = await database.documents.get(id);
   if (!doc) return false;
   const newFav = !doc.isFavorite;
-  await db.documents.update(id, { isFavorite: newFav, modifiedAt: Date.now() });
+  await database.documents.update(id, { isFavorite: newFav, modifiedAt: Date.now() });
   return newFav;
 }
 
 export async function deleteDocument(id: string, permanent: boolean = false): Promise<void> {
+  const database = await getDb();
   if (permanent) {
-    await db.documents.delete(id);
-    // Delete associated annotations, bookmarks, notes
-    await db.annotations.where("documentId").equals(id).delete();
-    await db.bookmarks.where("documentId").equals(id).delete();
-    await db.notes.where("documentId").equals(id).delete();
+    await database.documents.delete(id);
+    await database.annotations.where("documentId").equals(id).delete();
+    await database.bookmarks.where("documentId").equals(id).delete();
+    await database.notes.where("documentId").equals(id).delete();
   } else {
-    await db.documents.update(id, {
+    await database.documents.update(id, {
       deletedAt: Date.now(),
       modifiedAt: Date.now(),
     });
@@ -162,14 +181,16 @@ export async function deleteDocument(id: string, permanent: boolean = false): Pr
 }
 
 export async function restoreDocument(id: string): Promise<void> {
-  await db.documents.update(id, {
+  const database = await getDb();
+  await database.documents.update(id, {
     deletedAt: null,
     modifiedAt: Date.now(),
   });
 }
 
 export async function getTrashedDocuments(): Promise<DbDocument[]> {
-  const all = await db.documents.toArray();
+  const database = await getDb();
+  const all = await database.documents.toArray();
   return all
     .filter((d) => d.deletedAt !== null)
     .sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));

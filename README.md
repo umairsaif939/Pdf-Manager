@@ -23,9 +23,8 @@ Version 1 is **strictly local and offline-first**. All documents, annotations, n
 | :--- | :---: | :---: | :---: | :--- |
 | **Responsive App Shell & Editorial Theme** | P0 | Phase 1 | **Implemented & Tested** | Full desktop sidebar + mobile bottom nav, design tokens, light/dark themes |
 | **Honest Empty States & Welcome Modal** | P0 | Phase 1 | **Implemented & Tested** | First-visit privacy banner, clean initial states with toggles |
-| **PDF Import & IndexedDB Persistence** | P0 | Phase 2 | **Implemented & Tested** | Dexie.js schema, real file picker, multi-file validation, quota checks |
+| **PDF Import & IndexedDB Persistence** | P0 | Phase 2 | **Implemented & Tested** | Dexie.js schema v2 (indexed `name`), real file picker, multi-file validation, quota checks |
 | **PDF.js Client Viewer & Thumbnails** | P0 | Phase 2 | **Implemented & Tested** | High-DPI canvas rendering, page navigation, zoom, real page thumbnails |
-| **Supabase Cloud Sync & Storage** | Arch | Phase 2 | **Implemented & Tested** | Auth integration, RLS policies, cloud storage backup, .env.local setup |
 | **Normalized Annotation Engine (0..1)** | P0 | Phase 3 | *Next* | Pen, highlighter, vector eraser, shapes, text, sticky notes, undo/redo |
 | **Annotated PDF Export (pdf-lib)** | P0 | Phase 4 | *Not Started* | Flattening vector annotations into downloaded PDF (MVP Checkpoint) |
 | **Bookmarks & Outline TOC** | P0/P1 | Phase 5 | *Not Started* | Page bookmarks and embedded PDF table of contents tree |
@@ -38,18 +37,6 @@ Version 1 is **strictly local and offline-first**. All documents, annotations, n
 | **PWA Caching & Offline Hardening** | P0 | Phase 8 | *Not Started* | Service Worker app shell caching, cold-restart verification |
 | **Text-to-Speech & Command Palette** | P2 | Phase 9 | *Not Started* | Web Speech API, quick action palette, local PIN barrier |
 | **Final QA & Regression Verification** | P0 | Phase 10 | *Not Started* | Large PDF stress test, accessibility audit, final delivery |
-
----
-
-## Supabase Setup (Optional Cloud Backup)
-
-1. Create a Supabase project at [supabase.com](https://supabase.com).
-2. Copy `.env.local.example` to `.env.local`:
-   ```powershell
-   Copy-Item .env.local.example .env.local
-   ```
-3. Populate `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` from your Supabase Dashboard (**Project Settings -> API**).
-4. Run the initial SQL migration located at `supabase/migrations/20261027_initial_schema.sql` in the **Supabase SQL Editor** to set up tables and Row Level Security (RLS) policies.
 
 ---
 
