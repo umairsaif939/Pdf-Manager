@@ -10,7 +10,7 @@ import {
 } from "@/lib/pdf/pdfService";
 import { DbDocument } from "@/lib/storage/db";
 import { AnnotationOverlay } from "./AnnotationOverlay";
-import { AnnotationItem, ToolType, ShapeType } from "@/lib/annotations/types";
+import { AnnotationItem, ToolType, ShapeType, StampType } from "@/lib/annotations/types";
 
 interface PdfViewerProps {
   doc: DbDocument;
@@ -18,8 +18,10 @@ interface PdfViewerProps {
   zoomLevel: number; // e.g. 100 for 100%
   activeTool: ToolType;
   selectedShape: ShapeType;
+  selectedStamp: StampType;
   selectedColor: string;
   strokeWidth: number;
+  opacity: number;
   showAnnotations: boolean;
   annotations: AnnotationItem[];
   onAnnotationsChange: (newAnns: AnnotationItem[]) => void;
@@ -34,8 +36,10 @@ export function PdfViewer({
   zoomLevel,
   activeTool,
   selectedShape,
+  selectedStamp,
   selectedColor,
   strokeWidth,
+  opacity,
   showAnnotations,
   annotations,
   onAnnotationsChange,
@@ -68,7 +72,6 @@ export function PdfViewer({
         setPdfDoc(loadedPdf);
         onTotalPagesLoaded?.(loadedPdf.numPages);
 
-        // Generate thumbnails asynchronously
         generateAllThumbnails(loadedPdf);
       } catch (err: any) {
         if (!isCancelled) {
@@ -90,7 +93,6 @@ export function PdfViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc.id, doc.originalBlob]);
 
-  // Generate thumbnails for up to the first 20 pages
   const generateAllThumbnails = async (loadedPdf: any) => {
     try {
       const thumbs: { page: number; url: string }[] = [];
@@ -127,7 +129,6 @@ export function PdfViewer({
         if (!isCancelled) {
           setPageSize({ width: rendered.width, height: rendered.height });
 
-          // Render selectable TextLayer
           if (textLayerRef.current) {
             await renderPdfTextLayer(page, textLayerRef.current, scale);
           }
@@ -205,7 +206,7 @@ export function PdfViewer({
           className={`textLayer ${allowTextSelection ? "pointer-events-auto" : "pointer-events-none"}`}
         />
 
-        {/* 3. Annotation Overlay (SVG drawings, highlights, shapes, text boxes) */}
+        {/* 3. Annotation Overlay */}
         {pageSize && (
           <AnnotationOverlay
             pageWidth={pageSize.width}
@@ -214,8 +215,10 @@ export function PdfViewer({
             pageIndex={currentPage}
             activeTool={activeTool}
             selectedShape={selectedShape}
+            selectedStamp={selectedStamp}
             selectedColor={selectedColor}
             strokeWidth={strokeWidth}
+            opacity={opacity}
             showAnnotations={showAnnotations}
             annotations={annotations}
             onAnnotationsChange={onAnnotationsChange}

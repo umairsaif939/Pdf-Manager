@@ -20,6 +20,7 @@ export async function exportAnnotatedPdf(
   const arrayBuffer = await originalBlob.arrayBuffer();
   const pdfDoc = await PDFDocument.load(arrayBuffer);
   const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
   const pages = pdfDoc.getPages();
 
@@ -63,7 +64,7 @@ export async function exportAnnotatedPdf(
               width: r.width * pageWidth,
               height: r.height * pageHeight,
               color,
-              opacity: 0.35,
+              opacity: ann.opacity ?? 0.35,
             });
           }
         } else if (ann.rect) {
@@ -73,7 +74,7 @@ export async function exportAnnotatedPdf(
             width: ann.rect.width * pageWidth,
             height: ann.rect.height * pageHeight,
             color,
-            opacity: 0.35,
+            opacity: ann.opacity ?? 0.35,
           });
         } else if (ann.points && ann.points.length > 1) {
           for (let i = 0; i < ann.points.length - 1; i++) {
@@ -91,7 +92,7 @@ export async function exportAnnotatedPdf(
               },
               thickness: Math.max(12, ann.strokeWidth * 4 * (pageWidth / 800)),
               color,
-              opacity: 0.35,
+              opacity: ann.opacity ?? 0.35,
             });
           }
         }
@@ -169,17 +170,32 @@ export async function exportAnnotatedPdf(
         }
       }
 
-      // 5. Text Overlays
-      if ((ann.tool === "text" || ann.tool === "note") && ann.text && ann.rect) {
+      // 5. Text Overlays & Sticky Notes
+      if ((ann.tool === "text" || ann.tool === "note") && ann.rect) {
         const fontSize = Math.max(10, (ann.fontSize || 16) * (pageWidth / 800));
-        const lines = ann.text.split("\n");
+        const textContent = ann.tool === "note" ? `${ann.title ? ann.title + ': ' : ''}${ann.text || ''}` : (ann.text || '');
+        const lines = textContent.split("\n");
+
+        if (ann.tool === "note") {
+          // Draw subtle background box for note
+          page.drawRectangle({
+            x: ann.rect.x * pageWidth,
+            y: (1 - (ann.rect.y + ann.rect.height)) * pageHeight,
+            width: Math.max(120, ann.rect.width * pageWidth),
+            height: Math.max(40, ann.rect.height * pageHeight),
+            color: rgb(0.99, 0.95, 0.8),
+            borderColor: color,
+            borderWidth: 1.5,
+            opacity: 0.95,
+          });
+        }
 
         for (let l = 0; l < lines.length; l++) {
           const lineText = lines[l];
           if (!lineText) continue;
 
           page.drawText(lineText, {
-            x: ann.rect.x * pageWidth,
+            x: ann.rect.x * pageWidth + (ann.tool === "note" ? 6 : 0),
             y: (1 - ann.rect.y) * pageHeight - (l + 1) * (fontSize * 1.2),
             size: fontSize,
             font: helveticaFont,
@@ -187,6 +203,36 @@ export async function exportAnnotatedPdf(
             opacity: ann.opacity ?? 1,
           });
         }
+      }
+
+      // 6. Rubber Stamps
+      if (ann.tool === "stamp" && ann.rect) {
+        const stampText = ann.stampType || "APPROVED";
+        const w = ann.rect.width * pageWidth;
+        const h = ann.rect.height * pageHeight;
+        const x = ann.rect.x * pageWidth;
+        const y = (1 - (ann.rect.y + ann.rect.height)) * pageHeight;
+
+        // Stamp double-border
+        page.drawRectangle({
+          x,
+          y,
+          width: w,
+          height: h,
+          borderColor: color,
+          borderWidth: 2,
+          opacity: ann.opacity ?? 0.9,
+        });
+
+        const stampFontSize = Math.max(10, h * 0.45);
+        page.drawText(stampText, {
+          x: x + 6,
+          y: y + (h - stampFontSize) / 2 + 2,
+          size: stampFontSize,
+          font: helveticaBold,
+          color,
+          opacity: ann.opacity ?? 0.9,
+        });
       }
     }
   }

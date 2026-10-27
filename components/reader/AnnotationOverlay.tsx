@@ -1,13 +1,25 @@
 "use client";
 
-import React, { useRef, useState, useEffect } from "react";
-import { Trash2, Move, Check } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import {
+  Trash2,
+  Move,
+  Check,
+  StickyNote,
+  X,
+  Star,
+  CheckCircle2,
+  AlertTriangle,
+  FileCheck,
+  RotateCcw,
+} from "lucide-react";
 import {
   AnnotationItem,
   Point,
   Rect,
   ToolType,
   ShapeType,
+  StampType,
 } from "@/lib/annotations/types";
 
 interface AnnotationOverlayProps {
@@ -17,8 +29,10 @@ interface AnnotationOverlayProps {
   pageIndex: number;
   activeTool: ToolType;
   selectedShape: ShapeType;
+  selectedStamp: StampType;
   selectedColor: string;
   strokeWidth: number;
+  opacity: number;
   showAnnotations: boolean;
   annotations: AnnotationItem[];
   onAnnotationsChange: (newAnns: AnnotationItem[]) => void;
@@ -32,8 +46,10 @@ export function AnnotationOverlay({
   pageIndex,
   activeTool,
   selectedShape,
+  selectedStamp,
   selectedColor,
   strokeWidth,
+  opacity,
   showAnnotations,
   annotations,
   onAnnotationsChange,
@@ -46,7 +62,7 @@ export function AnnotationOverlay({
 
   // Active text box being edited
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
-  const [movingTextId, setMovingTextId] = useState<string | null>(null);
+  const [movingItemId, setMovingItemId] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   // Convert pixel coordinates to normalized (0..1)
@@ -78,7 +94,6 @@ export function AnnotationOverlay({
       eraseAtPoint(point);
       setIsDrawing(true);
     } else if (activeTool === "text") {
-      // Create a new text box at clicked location
       const newTextId = `ann-text-${Date.now()}`;
       const newAnnotation: AnnotationItem = {
         id: newTextId,
@@ -89,13 +104,49 @@ export function AnnotationOverlay({
         text: "Click to write...",
         color: selectedColor,
         strokeWidth: 1,
-        opacity: 1,
+        opacity,
         fontSize: 16,
         createdAt: Date.now(),
         modifiedAt: Date.now(),
       };
       onAnnotationsChange([...annotations, newAnnotation]);
       setEditingTextId(newTextId);
+    } else if (activeTool === "note") {
+      // Place a Sticky Note Pin
+      const newNoteId = `ann-note-${Date.now()}`;
+      const newAnnotation: AnnotationItem = {
+        id: newNoteId,
+        documentId,
+        pageIndex,
+        tool: "note",
+        rect: { x: point.x, y: point.y, width: 0.26, height: 0.16 },
+        title: "Study Note",
+        text: "Write your study note here...",
+        color: selectedColor || "#E76F35",
+        strokeWidth: 1,
+        opacity: 1,
+        isExpanded: true,
+        createdAt: Date.now(),
+        modifiedAt: Date.now(),
+      };
+      onAnnotationsChange([...annotations, newAnnotation]);
+    } else if (activeTool === "stamp") {
+      // Place a Stamp
+      const newStampId = `ann-stamp-${Date.now()}`;
+      const newAnnotation: AnnotationItem = {
+        id: newStampId,
+        documentId,
+        pageIndex,
+        tool: "stamp",
+        stampType: selectedStamp || "APPROVED",
+        rect: { x: point.x - 0.08, y: point.y - 0.03, width: 0.18, height: 0.06 },
+        color: selectedColor || (selectedStamp === "APPROVED" ? "#16A34A" : selectedStamp === "IMPORTANT" ? "#DC2626" : "#E76F35"),
+        strokeWidth: 2,
+        opacity,
+        createdAt: Date.now(),
+        modifiedAt: Date.now(),
+      };
+      onAnnotationsChange([...annotations, newAnnotation]);
     }
   };
 
@@ -127,7 +178,7 @@ export function AnnotationOverlay({
         points: currentPoints,
         color: selectedColor,
         strokeWidth: activeTool === "highlighter" ? Math.max(12, strokeWidth * 4) : strokeWidth,
-        opacity: activeTool === "highlighter" ? 0.35 : 1,
+        opacity: activeTool === "highlighter" ? Math.min(0.5, opacity) : opacity,
         createdAt: Date.now(),
         modifiedAt: Date.now(),
       };
@@ -139,7 +190,6 @@ export function AnnotationOverlay({
       const width = Math.abs(shapeCurrent.x - shapeStart.x);
       const height = Math.abs(shapeCurrent.y - shapeStart.y);
 
-      // Only commit if has meaningful dimensions
       if (width > 0.005 || height > 0.005 || selectedShape === "line" || selectedShape === "arrow") {
         const newAnn: AnnotationItem = {
           id: `ann-shape-${Date.now()}`,
@@ -151,7 +201,7 @@ export function AnnotationOverlay({
           points: [shapeStart, shapeCurrent],
           color: selectedColor,
           strokeWidth,
-          opacity: 1,
+          opacity,
           createdAt: Date.now(),
           modifiedAt: Date.now(),
         };
@@ -165,26 +215,26 @@ export function AnnotationOverlay({
 
   // Erase vector annotations intersected by eraser
   const eraseAtPoint = (pt: Point) => {
-    const threshold = 0.03; // ~3% of page tolerance
+    const threshold = 0.035; // ~3.5% of page tolerance
     const remaining = annotations.filter((ann) => {
       // 1. Check points (pen / freehand / line)
       if (ann.points && ann.points.length > 0) {
         for (const p of ann.points) {
           const dist = Math.hypot(p.x - pt.x, p.y - pt.y);
-          if (dist < threshold) return false; // Erase this object
+          if (dist < threshold) return false;
         }
       }
 
-      // 2. Check rect (shapes, text box, highlights)
+      // 2. Check rect (shapes, text box, sticky notes, stamps)
       if (ann.rect) {
         const r = ann.rect;
         if (
-          pt.x >= r.x - 0.01 &&
-          pt.x <= r.x + r.width + 0.01 &&
-          pt.y >= r.y - 0.01 &&
-          pt.y <= r.y + r.height + 0.01
+          pt.x >= r.x - 0.02 &&
+          pt.x <= r.x + r.width + 0.02 &&
+          pt.y >= r.y - 0.02 &&
+          pt.y <= r.y + r.height + 0.02
         ) {
-          return false; // Erase this object
+          return false;
         }
       }
 
@@ -222,7 +272,6 @@ export function AnnotationOverlay({
       const containerRect = container.getBoundingClientRect();
       const range = selection.getRangeAt(0);
 
-      // Verify selection is within our page container
       if (!container.contains(range.commonAncestorContainer)) return;
 
       const clientRects = Array.from(range.getClientRects());
@@ -243,7 +292,7 @@ export function AnnotationOverlay({
         rects: normalizedRects,
         color: selectedColor,
         strokeWidth: 1,
-        opacity: 0.35,
+        opacity: Math.min(0.4, opacity),
         createdAt: Date.now(),
         modifiedAt: Date.now(),
       };
@@ -256,9 +305,8 @@ export function AnnotationOverlay({
     return () => {
       document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [activeTool, annotations, containerRef, documentId, pageIndex, selectedColor, onAnnotationsChange]);
+  }, [activeTool, annotations, containerRef, documentId, pageIndex, selectedColor, opacity, onAnnotationsChange]);
 
-  // Convert normalized points array to SVG path string
   const pointsToSvgPath = (pts: Point[]): string => {
     if (pts.length < 2) return "";
     let d = `M ${pts[0].x * pageWidth} ${pts[0].y * pageHeight}`;
@@ -268,10 +316,10 @@ export function AnnotationOverlay({
     return d;
   };
 
-  // Text box drag handling
-  const handleTextDragStart = (e: React.MouseEvent, annId: string, currentRect: Rect) => {
+  // Item drag handling (for Text, Sticky Notes, Stamps)
+  const handleItemDragStart = (e: React.MouseEvent, annId: string, currentRect: Rect) => {
     e.stopPropagation();
-    setMovingTextId(annId);
+    setMovingItemId(annId);
     if (!containerRef.current) return;
     const cont = containerRef.current.getBoundingClientRect();
     setDragOffset({
@@ -280,23 +328,23 @@ export function AnnotationOverlay({
     });
   };
 
-  const handleTextDragMove = (e: React.MouseEvent) => {
-    if (!movingTextId || !containerRef.current) return;
+  const handleItemDragMove = (e: React.MouseEvent) => {
+    if (!movingItemId || !containerRef.current) return;
     const cont = containerRef.current.getBoundingClientRect();
-    const newX = Math.max(0, Math.min(0.8, (e.clientX - cont.left) / cont.width - dragOffset.x));
-    const newY = Math.max(0, Math.min(0.9, (e.clientY - cont.top) / cont.height - dragOffset.y));
+    const newX = Math.max(0, Math.min(0.85, (e.clientX - cont.left) / cont.width - dragOffset.x));
+    const newY = Math.max(0, Math.min(0.92, (e.clientY - cont.top) / cont.height - dragOffset.y));
 
     onAnnotationsChange(
       annotations.map((a) =>
-        a.id === movingTextId && a.rect
+        a.id === movingItemId && a.rect
           ? { ...a, rect: { ...a.rect, x: newX, y: newY } }
           : a
       )
     );
   };
 
-  const handleTextDragEnd = () => {
-    setMovingTextId(null);
+  const handleItemDragEnd = () => {
+    setMovingItemId(null);
   };
 
   const isInteractiveDrawingTool =
@@ -304,15 +352,17 @@ export function AnnotationOverlay({
     activeTool === "highlighter" ||
     activeTool === "shape" ||
     activeTool === "eraser" ||
-    activeTool === "text";
+    activeTool === "text" ||
+    activeTool === "note" ||
+    activeTool === "stamp";
 
   return (
     <div
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onMouseMove={movingTextId ? handleTextDragMove : undefined}
-      onMouseUp={movingTextId ? handleTextDragEnd : undefined}
+      onMouseMove={movingItemId ? handleItemDragMove : undefined}
+      onMouseUp={movingItemId ? handleItemDragEnd : undefined}
       className={`absolute inset-0 z-10 transition-opacity duration-150 ${
         showAnnotations ? "opacity-100" : "opacity-0 pointer-events-none"
       } ${
@@ -350,7 +400,7 @@ export function AnnotationOverlay({
           if (ann.tool === "highlighter") {
             if (ann.rects && ann.rects.length > 0) {
               return (
-                <g key={ann.id} opacity={0.35} style={{ mixBlendMode: "multiply" }}>
+                <g key={ann.id} opacity={ann.opacity ?? 0.35} style={{ mixBlendMode: "multiply" }}>
                   {ann.rects.map((r, i) => (
                     <rect
                       key={i}
@@ -375,7 +425,7 @@ export function AnnotationOverlay({
                   strokeWidth={ann.strokeWidth}
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  opacity={0.35}
+                  opacity={ann.opacity ?? 0.35}
                   style={{ mixBlendMode: "multiply" }}
                 />
               );
@@ -401,6 +451,7 @@ export function AnnotationOverlay({
                   fill="none"
                   stroke={ann.color}
                   strokeWidth={ann.strokeWidth}
+                  opacity={ann.opacity ?? 1}
                   rx={2}
                 />
               );
@@ -417,6 +468,7 @@ export function AnnotationOverlay({
                   fill="none"
                   stroke={ann.color}
                   strokeWidth={ann.strokeWidth}
+                  opacity={ann.opacity ?? 1}
                 />
               );
             }
@@ -440,7 +492,7 @@ export function AnnotationOverlay({
               const angle = Math.atan2(y2 - y1, x2 - x1);
               const headLen = 14;
               return (
-                <g key={ann.id}>
+                <g key={ann.id} opacity={ann.opacity ?? 1}>
                   <line
                     x1={x1}
                     y1={y1}
@@ -482,6 +534,7 @@ export function AnnotationOverlay({
                 stroke={ann.color}
                 strokeWidth={ann.strokeWidth}
                 strokeLinecap="round"
+                opacity={ann.opacity ?? 1}
               />
             );
           }
@@ -498,7 +551,7 @@ export function AnnotationOverlay({
             strokeWidth={activeTool === "highlighter" ? Math.max(12, strokeWidth * 4) : strokeWidth}
             strokeLinecap="round"
             strokeLinejoin="round"
-            opacity={activeTool === "highlighter" ? 0.35 : 1}
+            opacity={activeTool === "highlighter" ? Math.min(0.5, opacity) : opacity}
             style={activeTool === "highlighter" ? { mixBlendMode: "multiply" } : undefined}
           />
         )}
@@ -516,6 +569,7 @@ export function AnnotationOverlay({
                 stroke={selectedColor}
                 strokeWidth={strokeWidth}
                 strokeDasharray="4 4"
+                opacity={opacity}
                 rx={2}
               />
             )}
@@ -529,6 +583,7 @@ export function AnnotationOverlay({
                 stroke={selectedColor}
                 strokeWidth={strokeWidth}
                 strokeDasharray="4 4"
+                opacity={opacity}
               />
             )}
             {selectedShape === "line" && (
@@ -540,6 +595,7 @@ export function AnnotationOverlay({
                 stroke={selectedColor}
                 strokeWidth={strokeWidth}
                 strokeDasharray="4 4"
+                opacity={opacity}
               />
             )}
             {selectedShape === "arrow" && (
@@ -551,15 +607,16 @@ export function AnnotationOverlay({
                 stroke={selectedColor}
                 strokeWidth={strokeWidth}
                 strokeDasharray="4 4"
+                opacity={opacity}
               />
             )}
           </>
         )}
       </svg>
 
-      {/* Text Box Overlays (Interactive & Repositionable) */}
+      {/* Text Box Overlays */}
       {annotations
-        .filter((a) => a.tool === "text" || a.tool === "note")
+        .filter((a) => a.tool === "text")
         .map((ann) => {
           if (!ann.rect) return null;
           const isEditing = editingTextId === ann.id;
@@ -573,6 +630,7 @@ export function AnnotationOverlay({
                 left: `${leftPx}px`,
                 top: `${topPx}px`,
                 position: "absolute",
+                opacity: ann.opacity ?? 1,
               }}
               onClick={(e) => e.stopPropagation()}
               className={`group pointer-events-auto select-none rounded-control transition-all ${
@@ -581,19 +639,18 @@ export function AnnotationOverlay({
                   : "bg-surface/90 hover:bg-surface border border-line shadow-xs p-1.5 z-20"
               }`}
             >
-              {/* Header with drag handle and delete button */}
               <div className="flex items-center justify-between gap-2 pb-1 border-b border-line/40 text-[10px] text-muted">
                 <div
-                  onMouseDown={(e) => handleTextDragStart(e, ann.id, ann.rect!)}
+                  onMouseDown={(e) => handleItemDragStart(e, ann.id, ann.rect!)}
                   className="cursor-move flex items-center gap-1 hover:text-ink p-0.5 rounded"
-                  title="Drag to reposition text box"
+                  title="Drag to reposition"
                 >
                   <Move className="w-3 h-3" />
                   <span>Text</span>
                 </div>
 
                 <div className="flex items-center gap-1">
-                  {isEditing ? (
+                  {isEditing && (
                     <button
                       onClick={() => setEditingTextId(null)}
                       className="text-success hover:text-success/80 p-0.5"
@@ -601,7 +658,7 @@ export function AnnotationOverlay({
                     >
                       <Check className="w-3.5 h-3.5" />
                     </button>
-                  ) : null}
+                  )}
                   <button
                     onClick={() => {
                       onAnnotationsChange(annotations.filter((a) => a.id !== ann.id));
@@ -615,7 +672,6 @@ export function AnnotationOverlay({
                 </div>
               </div>
 
-              {/* Text Area */}
               {isEditing ? (
                 <textarea
                   autoFocus
@@ -640,6 +696,179 @@ export function AnnotationOverlay({
                   {ann.text || "Empty text"}
                 </div>
               )}
+            </div>
+          );
+        })}
+
+      {/* Sticky Notes Overlays */}
+      {annotations
+        .filter((a) => a.tool === "note")
+        .map((ann) => {
+          if (!ann.rect) return null;
+          const leftPx = ann.rect.x * pageWidth;
+          const topPx = ann.rect.y * pageHeight;
+          const isExpanded = ann.isExpanded ?? false;
+
+          return (
+            <div
+              key={ann.id}
+              style={{
+                left: `${leftPx}px`,
+                top: `${topPx}px`,
+                position: "absolute",
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="pointer-events-auto z-30 select-none animate-fade-in"
+            >
+              {isExpanded ? (
+                /* Expanded Sticky Note Card */
+                <div
+                  className="w-64 bg-amber-50 dark:bg-[#2A2318] border-2 border-amber-300 dark:border-amber-700/60 rounded-card shadow-soft p-3 space-y-2 text-ink text-xs"
+                  style={{ borderLeftColor: ann.color, borderLeftWidth: "5px" }}
+                >
+                  <div className="flex items-center justify-between pb-1.5 border-b border-amber-200/60 dark:border-amber-800/40">
+                    <div
+                      onMouseDown={(e) => handleItemDragStart(e, ann.id, ann.rect!)}
+                      className="cursor-move flex items-center gap-1.5 font-semibold text-amber-900 dark:text-amber-200"
+                    >
+                      <StickyNote className="w-3.5 h-3.5 text-amber-600" />
+                      <input
+                        type="text"
+                        value={ann.title || "Note"}
+                        onChange={(e) => {
+                          const updated = annotations.map((a) =>
+                            a.id === ann.id ? { ...a, title: e.target.value } : a
+                          );
+                          onAnnotationsChange(updated);
+                        }}
+                        className="bg-transparent font-serif font-bold text-xs outline-none w-36"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => {
+                          const updated = annotations.map((a) =>
+                            a.id === ann.id ? { ...a, isExpanded: false } : a
+                          );
+                          onAnnotationsChange(updated);
+                        }}
+                        className="p-1 rounded text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                        title="Minimize Note"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() =>
+                          onAnnotationsChange(annotations.filter((a) => a.id !== ann.id))
+                        }
+                        className="p-1 rounded text-danger hover:bg-red-100 dark:hover:bg-red-900/40"
+                        title="Delete Note"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <textarea
+                    value={ann.text || ""}
+                    onChange={(e) => {
+                      const updated = annotations.map((a) =>
+                        a.id === ann.id ? { ...a, text: e.target.value } : a
+                      );
+                      onAnnotationsChange(updated);
+                    }}
+                    placeholder="Type your study notes here..."
+                    rows={3}
+                    className="w-full bg-transparent resize-none border-none outline-none font-sans text-xs text-ink/90 leading-relaxed placeholder:text-muted/60"
+                  />
+
+                  <div className="flex items-center justify-between text-[10px] text-muted pt-1 border-t border-amber-200/50">
+                    <span>Page {pageIndex}</span>
+                    <button
+                      onClick={() => {
+                        const updated = annotations.map((a) =>
+                          a.id === ann.id ? { ...a, isExpanded: false } : a
+                        );
+                        onAnnotationsChange(updated);
+                      }}
+                      className="text-amber-700 dark:text-amber-400 font-medium hover:underline"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* Minimized Pin Icon */
+                <button
+                  onClick={() => {
+                    const updated = annotations.map((a) =>
+                      a.id === ann.id ? { ...a, isExpanded: true } : a
+                    );
+                    onAnnotationsChange(updated);
+                  }}
+                  className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-900/80 border-2 border-amber-400 dark:border-amber-600 text-amber-800 dark:text-amber-200 shadow-soft flex items-center justify-center hover:scale-110 transition-transform group"
+                  title={`${ann.title || "Study Note"}: Click to open`}
+                >
+                  <StickyNote className="w-4 h-4 text-amber-600" />
+                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-terracotta border-2 border-white animate-pulse" />
+                </button>
+              )}
+            </div>
+          );
+        })}
+
+      {/* Rubber Stamps Overlays */}
+      {annotations
+        .filter((a) => a.tool === "stamp")
+        .map((ann) => {
+          if (!ann.rect) return null;
+          const leftPx = ann.rect.x * pageWidth;
+          const topPx = ann.rect.y * pageHeight;
+          const type = ann.stampType || "APPROVED";
+
+          return (
+            <div
+              key={ann.id}
+              style={{
+                left: `${leftPx}px`,
+                top: `${topPx}px`,
+                position: "absolute",
+                opacity: ann.opacity ?? 1,
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="pointer-events-auto z-20 group select-none animate-fade-in"
+            >
+              <div
+                onMouseDown={(e) => handleItemDragStart(e, ann.id, ann.rect!)}
+                className="cursor-move inline-flex items-center gap-1.5 px-3 py-1 rounded-sm border-2 font-serif font-black tracking-widest text-xs uppercase shadow-sm transition-transform group-hover:scale-105"
+                style={{
+                  borderColor: ann.color,
+                  color: ann.color,
+                  backgroundColor: `${ann.color}15`,
+                  borderStyle: "double",
+                  borderWidth: "3px",
+                  transform: "rotate(-3deg)",
+                }}
+              >
+                {type === "APPROVED" && <CheckCircle2 className="w-3.5 h-3.5" />}
+                {type === "IMPORTANT" && <AlertTriangle className="w-3.5 h-3.5" />}
+                {type === "REVIEW" && <FileCheck className="w-3.5 h-3.5" />}
+                {type === "REVISED" && <RotateCcw className="w-3.5 h-3.5" />}
+                {type === "STAR" && <Star className="w-3.5 h-3.5 fill-current" />}
+                {type === "CHECK" && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                <span>{type}</span>
+
+                <button
+                  onClick={() =>
+                    onAnnotationsChange(annotations.filter((a) => a.id !== ann.id))
+                  }
+                  className="opacity-0 group-hover:opacity-100 ml-1 hover:text-danger transition-opacity"
+                  title="Remove Stamp"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
             </div>
           );
         })}

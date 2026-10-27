@@ -33,7 +33,7 @@ export interface DbAnnotation {
   documentId: string;
   pageIndex: number;
   pageUid?: string;
-  type: "pen" | "highlighter" | "shape" | "text" | "note" | "image";
+  type: "pen" | "highlighter" | "shape" | "text" | "note" | "image" | "stamp";
   geometry: any; // Normalized 0..1 coordinates
   style: {
     color: string;
